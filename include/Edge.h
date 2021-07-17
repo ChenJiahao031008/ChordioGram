@@ -70,9 +70,11 @@ typedef std::vector<ChordFeature> ChordioGram;
 
 int GetAngle8Bin(const float &theta);
 
-void ImageProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleImage);
+void LoadObjectFile(const std::string &strPath, std::vector<Object> &vObject);
 
-void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleImage, ChordioGram &chordGram, ChordFeature &totalCF);
+void ImageProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage);
+
+void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage, ChordioGram &chordGram, ChordFeature &totalCF);
 
 float ArrayNormL1(float a[], int N);
 

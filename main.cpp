@@ -4,12 +4,12 @@ using namespace std;
 using namespace cv;
 
 // 过大的网格会使得边缘点的分布不均匀，过小的网格则会使噪点较多
-#define CELL_NUM 5
+#define CELL_NUM 3
 
 
 int main(int argc, char const *argv[])
 {
-    if ( argc != 3){
+    if ( argc != 5){
         cerr << "[ERROR] Please check argv! " << endl;
         return -1;
     }
@@ -20,9 +20,19 @@ int main(int argc, char const *argv[])
         cv::Mat imgRGB = imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
         cv::Mat imgRGB2 = imread(argv[2], CV_LOAD_IMAGE_UNCHANGED);
 
-        cv::Mat rgbROI, rgbROI2;
-        resize(imgRGB,rgbROI,Size(640,480));
-        resize(imgRGB2, rgbROI2, Size(640, 480));
+        vector<Object> vObject, vObject2;
+        LoadObjectFile(argv[3], vObject);
+        LoadObjectFile(argv[4], vObject2);
+        Object obj  = vObject[0];
+        Object obj2 = vObject2[0];
+        obj.print();
+        obj2.print();
+
+        cv::Mat rgbROI = imgRGB(cv::Rect(obj.corner.x, obj.corner.y, obj.w, obj.h));
+        cv::Mat rgbROI2 = imgRGB2(cv::Rect(obj2.corner.x, obj2.corner.y, obj2.w, obj2.h));
+
+        objectRGB = Mat::zeros(rgbROI.size(), rgbROI.type());
+        objectRGB2 = Mat::zeros(rgbROI2.size(), rgbROI2.type());
 
         // 彩色图像采用双边滤波去噪
         bilateralFilter(rgbROI, objectRGB, 15, 20, 50);
@@ -32,17 +42,17 @@ int main(int argc, char const *argv[])
 
 
     // 获得边缘信息，包括canny边缘，边缘强度和边缘角度
-    cv::Mat magnitudeImage, angleImage;
-    cv::Mat magnitudeImage2, angleImage2;
-    ImageProcessing(objectRGB, magnitudeImage, angleImage);
-    ImageProcessing(objectRGB2, magnitudeImage2, angleImage2);
+    cv::Mat magnitudeImage, angleImage, objectCanny;
+    cv::Mat magnitudeImage2, angleImage2, objectCanny2;
+    ImageProcessing(objectRGB, objectCanny, magnitudeImage, angleImage);
+    ImageProcessing(objectRGB2, objectCanny2, magnitudeImage2, angleImage2);
 
     ChordFeature totalCF;
     ChordFeature totalCF2;
     ChordioGram chordGram, chordGram2;
 
-    EdgeProcessing(objectRGB, magnitudeImage, angleImage, chordGram, totalCF);
-    EdgeProcessing(objectRGB2, magnitudeImage2, angleImage2, chordGram2, totalCF2);
+    EdgeProcessing(objectRGB, objectCanny, magnitudeImage, angleImage, chordGram, totalCF);
+    EdgeProcessing(objectRGB2, objectCanny2, magnitudeImage2, angleImage2, chordGram2, totalCF2);
 
     cv::waitKey(0);
 
@@ -58,10 +68,30 @@ int main(int argc, char const *argv[])
         scores.push_back(tmp_score);
     }
     sort(scores.begin(), scores.end());
-    for (size_t i=0; i<floor(CELL_NUM*0.5);++i){
+    for (size_t i = 0; i < floor(chordGram.size() * 0.5); ++i)
+    {
         score_weight += scores[i];
     }
-    cout << "[INFO] 权重分配得分 : " << score_weight << endl;
+    cout << "[INFO] 回环模式权重分配得分 : " << score_weight << endl;
+
+    float score_tracking =0.0;
+    float min_tracking = 1000.0;
+    std::vector<float> min_scores;
+    for (size_t i = 0; i < chordGram.size() ; ++i)
+        for (size_t j = 0; j < chordGram2.size(); ++j)
+        {
+            float tmp_score = CompareScores(chordGram[i], chordGram2[j]);
+            if (tmp_score <min_tracking)
+                min_tracking = tmp_score;
+        }
+    min_scores.push_back(min_tracking);
+    sort(min_scores.begin(),min_scores.end());
+    for (size_t i = 0; i < floor(chordGram.size() * 0.6); ++i)
+    {
+        score_tracking += scores[i];
+    }
+    score_tracking /= floor(chordGram.size() * 0.6);
+    cout << "[INFO] 追踪模式权重分配得分 : " << score_tracking << endl;
 
     return 0;
 }
@@ -88,7 +118,7 @@ float ArrayNormL1(float a[], int N){
     return norm;
 }
 
-void ImageProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleImage)
+void ImageProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage)
 {
     // TODO:尝试用彩色图像或者经过处理后的灰度图像进行边缘提取看看有什么不同
     cv::Mat objectGray;
@@ -98,6 +128,15 @@ void ImageProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angle
     Sobel(objectGray, grad_y, CV_32FC1, 0, 1);
     blur(grad_x, grad_x, Size(3, 3));
     blur(grad_y, grad_y, Size(3, 3));
+    int edgeThreshScharr_low = 25 ;
+    int edgeThreshScharr_high = 50;
+
+    Mat grad16S_x, grad16S_y;
+    grad_x.convertTo(grad16S_x, CV_16S);
+    grad_y.convertTo(grad16S_y, CV_16S);
+    Canny(grad16S_x, grad16S_y, objectCanny, edgeThreshScharr_low, edgeThreshScharr_high, true);
+    // imshow("objectCanny: " + (objectCanny.cols), objectCanny);
+
     // 如果直接加权会导致负数部分比较难处理
     // // addWeighted(grad_x, 0.5, grad_y, 0.5, 0, magnitudeImage);
 
@@ -110,7 +149,7 @@ void ImageProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angle
     convertScaleAbs(grad_x, abs_grad_x);
     convertScaleAbs(grad_y, abs_grad_y);
     addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, showGradImage);
-    imshow("showGradImage for abs_grad", showGradImage);
+    // imshow("showGradImage for abs_grad", showGradImage);
     // cv::waitKey(0);
     // 如果采用这种方法，则因为梯度比例已经被改变了，所以在后面需要加上梯度选择，大于4-5的才进行处理
     // 这种方法得到的点相对稠密一点，先选择这个试试
@@ -121,12 +160,13 @@ void ImageProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angle
     angleImage.convertTo(outAngle, CV_16UC1);
     cv::imwrite("../result/magnitudeImage.png", outGrad);
     cv::imwrite("../result/angle.png", outAngle);
+    cv::imwrite("../result/objectCanny.png", objectCanny);
 
     // cout << "[INFO] magnitudeImage 的类型: " << magnitudeImage.type() << endl;
     // cout << "[INFO] angle 的类型: " << angleImage.type() << endl;
 }
 
-void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleImage, ChordioGram &chordGram, ChordFeature &totalCF)
+void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage, ChordioGram &chordGram, ChordFeature &totalCF)
 {
     // 划分网格，对每个网格取点
     vector<vector<EdgePoint>> vedgePoints;
@@ -138,7 +178,7 @@ void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleI
     cout << "       图像大小: [" << objectRGB.cols << ", " << objectRGB.rows << "]" << endl;
 
     int totalVotes = 0;
-    double p = 0.15;
+    double p = 1.0;
     cout << "[INFO] 边缘点的比例系数 p: " << p << endl;
 
     for (size_t i = 0; i < nCell; ++i)
@@ -151,6 +191,7 @@ void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleI
         {
             for (size_t x = area_start.x; x < area_start.x + cell_x_size; ++x)
             {
+                if (objectCanny.at<char>(y, x) == 0) continue;
                 float theta = angleImage.at<float>(y, x);
                 float grad = magnitudeImage.at<float>(Point(x, y));
                 if (grad < 5)
@@ -164,9 +205,7 @@ void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleI
         // 根据梯度大小进行排序，比例为p
         sort(vedge.begin(), vedge.end(), CompGreater());
         for (size_t j = 0; j < floor(p * vedge.size()); ++j)
-        {
             vedgePoints[i].emplace_back(vedge[j]);
-        }
 
         ChordFeature cf;
 
@@ -207,6 +246,30 @@ void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &magnitudeImage, cv::Mat &angleI
         }
     }
     cv::imshow("showCircles" + to_string(totalVotes), showCircles);
+}
+
+void LoadObjectFile(const string &strPath, vector<Object> &vObject)
+{
+    ifstream ObjectFile;
+    ObjectFile.open(strPath.c_str());
+    cout << "[LOAD] Open Object File ..." << endl;
+    while (!ObjectFile.eof())
+    {
+        string s;
+        getline(ObjectFile, s);
+        if (!s.empty())
+        {
+            stringstream ss;
+            ss << s;
+            Object obj;
+            ss >> obj.id;
+            ss >> obj.corner.x;
+            ss >> obj.corner.y;
+            ss >> obj.w;
+            ss >> obj.h;
+            vObject.emplace_back(obj);
+        }
+    }
 }
 
 int GetAngle8Bin(const float &theta)
