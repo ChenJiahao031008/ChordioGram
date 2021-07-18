@@ -70,6 +70,8 @@ typedef std::vector<ChordFeature> ChordioGram;
 
 int GetAngle8Bin(const float &theta);
 
+void GetAngle8BinOverlapping(const float &theta, int &bin1, int &bin2);
+
 void LoadObjectFile(const std::string &strPath, std::vector<Object> &vObject);
 
 void ImageProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage);
@@ -79,6 +81,8 @@ void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitude
 float ArrayNormL1(float a[], int N);
 
 float CompareScores(ChordFeature &a, ChordFeature &b);
+
+void CutImageEdge(cv::Mat &objectCanny);
 
 struct EdgePoint
 {
