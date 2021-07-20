@@ -3,6 +3,10 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d/features2d.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/opencv.hpp>
+#include <torch/script.h>
+#include <algorithm>
+#include <time.h>
 #include <vector>
 #include <cassert>
 #include <cstdlib>
@@ -13,8 +17,15 @@
 struct Object
 {
     int id;
-    cv::Point2i corner;
     int w, h;
+    cv::Point2i corner;
+    std::string name = "";
+    float score = 1.0;
+
+    Object(int &id_, int &x, int &y, int &w_, int &h_, std::string &name_, float &score_) : id(id_), corner(cv::Point2i(x,y)), w(w_), h(h_), name(name_), score(score_){};
+
+    Object(){};
+
     void print() { std::cout << "[INFO] Object " << id << ":  " << corner << "\t" << w << "\t" << h << std::endl; };
 };
 
@@ -66,24 +77,6 @@ struct ChordFeature
     }
 };
 
-typedef std::vector<ChordFeature> ChordioGram;
-
-int GetAngle8Bin(const float &theta);
-
-void GetAngle8BinOverlapping(const float &theta, int &bin1, int &bin2);
-
-void LoadObjectFile(const std::string &strPath, std::vector<Object> &vObject);
-
-void ImageProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage);
-
-void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage, ChordioGram &chordGram, ChordFeature &totalCF);
-
-float ArrayNormL1(float a[], int N);
-
-float CompareScores(ChordFeature &a, ChordFeature &b);
-
-void CutImageEdge(cv::Mat &objectCanny);
-
 struct EdgePoint
 {
     cv::Point2i pt;
@@ -106,6 +99,26 @@ public:
     }
 };
 
+typedef std::vector<ChordFeature> ChordioGram;
 
+int GetAngle8Bin(const float &theta);
 
+void GetAngle8BinOverlapping(const float &theta, int &bin1, int &bin2);
 
+void LoadObjectFile(const std::string &strPath, std::vector<Object> &vObject);
+
+void ImageProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage);
+
+void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitudeImage, cv::Mat &angleImage, ChordioGram &chordGram, ChordFeature &totalCF);
+
+float ArrayNormL1(float a[], int N);
+
+float CompareScores(ChordFeature &a, ChordFeature &b);
+
+void CutImageEdge(cv::Mat &objectCanny);
+
+std::vector<torch::Tensor> non_max_suppression(torch::Tensor preds, float score_thresh=0.5, float iou_thresh=0.5);
+
+void PreProcessingOffLine(const cv::Mat &imgRGB, const std::string &strPath, cv::Mat &objectRGB);
+
+void PreProcessingOnLine(const cv::Mat &imgRGB, cv::Mat &objectRGB);

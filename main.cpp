@@ -3,43 +3,47 @@
 using namespace std;
 using namespace cv;
 
+//目标框检测离线还是在线
+#define ONLINE_DETECT 1
 // 过大的网格会使得边缘点的分布不均匀，过小的网格则会使噪点较多
 #define CELL_NUM 2
+// 半个重叠角度设置
 #define ANGLE_OVERLAP 5
 
 int main(int argc, char const *argv[])
 {
-    if ( argc != 5){
+    if ((argc != 5 && ONLINE_DETECT == 0) || (argc != 3 && ONLINE_DETECT == 1))
+    {
         cerr << "[ERROR] Please check argv! " << endl;
         return -1;
     }
 
-    // 获得深度图和彩色图
-    cv::Mat objectRGB, objectRGB2;
+    // 读取图像并检查
+    cv::Mat imgRGB = imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
+    cv::Mat imgRGB2 = imread(argv[2], CV_LOAD_IMAGE_UNCHANGED);
+    if (imgRGB.empty() || imgRGB2.empty())
     {
-        cv::Mat imgRGB = imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
-        cv::Mat imgRGB2 = imread(argv[2], CV_LOAD_IMAGE_UNCHANGED);
-
-        vector<Object> vObject, vObject2;
-        LoadObjectFile(argv[3], vObject);
-        LoadObjectFile(argv[4], vObject2);
-        Object obj  = vObject[0];
-        Object obj2 = vObject2[0];
-        obj.print();
-        obj2.print();
-
-        cv::Mat rgbROI = imgRGB(cv::Rect(obj.corner.x, obj.corner.y, obj.w, obj.h));
-        cv::Mat rgbROI2 = imgRGB2(cv::Rect(obj2.corner.x, obj2.corner.y, obj2.w, obj2.h));
-
-        // cv::Mat objectRGB_ = Mat::zeros(rgbROI.size(), rgbROI.type());
-        // cv::Mat objectRGB2_ = Mat::zeros(rgbROI2.size(), rgbROI2.type());
-        cv::Mat objectRGB_, objectRGB2_;
-
-        // 彩色图像采用双边滤波去噪
-        bilateralFilter(rgbROI, objectRGB, 15, 20, 50);
-        bilateralFilter(rgbROI2, objectRGB2, 15, 20, 50);
+        std::cerr << "Read images failed!" << std::endl;
+        return -1;
     }
+    std::vector<std::string> classnames;
+    std::ifstream f("../config/coco.names");
+    std::string name = "";
+    while (std::getline(f, name))
+        classnames.push_back(name);
 
+    // 得到物体图像并进行预处理
+    cv::Mat objectRGB, objectRGB2;
+    if (ONLINE_DETECT == 1)
+    {
+        PreProcessingOnLine(imgRGB, objectRGB);
+        PreProcessingOnLine(imgRGB2, objectRGB2);
+    }else{
+        PreProcessingOffLine(imgRGB, argv[3], objectRGB);
+        PreProcessingOffLine(imgRGB2, argv[4], objectRGB2);
+    }
+    if (objectRGB.empty() || objectRGB2.empty())
+        exit(0);
 
     // 获得边缘信息，包括canny边缘，边缘强度和边缘角度
     cv::Mat magnitudeImage, angleImage, objectCanny;
@@ -139,9 +143,9 @@ void ImageProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitud
     grad_x.convertTo(grad16S_x, CV_16S);
     grad_y.convertTo(grad16S_y, CV_16S);
     Canny(grad16S_x, grad16S_y, objectCanny, edgeThreshScharr_low, edgeThreshScharr_high, true);
-    imshow("objectCanny: " + (objectCanny.cols), objectCanny);
+    // imshow("objectCanny: " + (objectCanny.cols), objectCanny);
     CutImageEdge(objectCanny);
-    imshow("objectCanny after processed: " + (objectCanny.cols), objectCanny);
+    // imshow("objectCanny after processed: " + (objectCanny.cols), objectCanny);
 
     // 如果直接加权会导致负数部分比较难处理
     // // addWeighted(grad_x, 0.5, grad_y, 0.5, 0, magnitudeImage);
@@ -193,19 +197,21 @@ void EdgeProcessing(cv::Mat &objectRGB, cv::Mat &objectCanny, cv::Mat &magnitude
         Point2i area_start((i % CELL_NUM) * cell_x_size, (i / CELL_NUM) * cell_y_size);
         // cout << "area_start : " << i << ": " << area_start.x << "," << area_start.y << endl;
         // 计算每个网格左上方角点坐标 area_start
+        cv::Mat binaryMask = cv::Mat::zeros(angleImage.size(), CV_8UC1);
         for (size_t y = area_start.y; y < area_start.y + cell_y_size; ++y)
         {
             for (size_t x = area_start.x; x < area_start.x + cell_x_size; ++x)
             {
-                if (objectCanny.at<char>(y, x) == 0) continue;
+                if (objectCanny.at<uchar>(y, x) == 0) continue;
                 float theta = angleImage.at<float>(y, x);
                 float grad = magnitudeImage.at<float>(Point(x, y));
                 if (grad < 50)
                     continue;
                 // TODO：非极大值抑制方法处理，现有方法效率太低
-                // if (magnitudeImage.at<float>(y, x + 1) > grad || magnitudeImage.at<float>(y + 1, x + 1) > grad || magnitudeImage.at<float>(y + 1, x) > grad || magnitudeImage.at<float>(y, x - 1) > grad || magnitudeImage.at<float>(y - 1, x - 1) > grad || magnitudeImage.at<float>(y - 1, x) > grad)
-                //     continue;
+                if (binaryMask.at<uchar>(y, x + 1) == 255 || binaryMask.at<uchar>(y + 1, x) == 255 || binaryMask.at<uchar>(y, x - 1) == 255 || binaryMask.at<uchar>(y - 1, x) == 255)
+                    continue;
                 vedge.emplace_back(Point2i(x, y), i, grad, theta);
+                binaryMask.at<uchar>(y,x) = 255;
             }
         }
         // 根据梯度大小进行排序，比例为p
@@ -343,4 +349,160 @@ void CutImageEdge(cv::Mat &objectCanny)
             if (stats.at<int>(label, cv::CC_STAT_AREA) < 30)
                 objectCanny.at<uchar>(Point(x, y)) = 0;
         }
+}
+
+std::vector<torch::Tensor> non_max_suppression(torch::Tensor preds, float score_thresh , float iou_thresh)
+{
+    std::vector<torch::Tensor> output;
+    for (size_t i = 0; i < preds.sizes()[0]; ++i)
+    {
+        torch::Tensor pred = preds.select(0, i);
+
+        // Filter by scores
+        torch::Tensor scores = pred.select(1, 4) * std::get<0>(torch::max(pred.slice(1, 5, pred.sizes()[1]), 1));
+        pred = torch::index_select(pred, 0, torch::nonzero(scores > score_thresh).select(1, 0));
+        if (pred.sizes()[0] == 0)
+            continue;
+
+        // (center_x, center_y, w, h) to (left, top, right, bottom)
+        pred.select(1, 0) = pred.select(1, 0) - pred.select(1, 2) / 2;
+        pred.select(1, 1) = pred.select(1, 1) - pred.select(1, 3) / 2;
+        pred.select(1, 2) = pred.select(1, 0) + pred.select(1, 2);
+        pred.select(1, 3) = pred.select(1, 1) + pred.select(1, 3);
+
+        // Computing scores and classes
+        std::tuple<torch::Tensor, torch::Tensor> max_tuple = torch::max(pred.slice(1, 5, pred.sizes()[1]), 1);
+        pred.select(1, 4) = pred.select(1, 4) * std::get<0>(max_tuple);
+        pred.select(1, 5) = std::get<1>(max_tuple);
+
+        torch::Tensor dets = pred.slice(1, 0, 6);
+
+        torch::Tensor keep = torch::empty({dets.sizes()[0]});
+        torch::Tensor areas = (dets.select(1, 3) - dets.select(1, 1)) * (dets.select(1, 2) - dets.select(1, 0));
+        std::tuple<torch::Tensor, torch::Tensor> indexes_tuple = torch::sort(dets.select(1, 4), 0, 1);
+        torch::Tensor v = std::get<0>(indexes_tuple);
+        torch::Tensor indexes = std::get<1>(indexes_tuple);
+        int count = 0;
+        while (indexes.sizes()[0] > 0)
+        {
+            keep[count] = (indexes[0].item().toInt());
+            count += 1;
+
+            // Computing overlaps
+            torch::Tensor lefts = torch::empty(indexes.sizes()[0] - 1);
+            torch::Tensor tops = torch::empty(indexes.sizes()[0] - 1);
+            torch::Tensor rights = torch::empty(indexes.sizes()[0] - 1);
+            torch::Tensor bottoms = torch::empty(indexes.sizes()[0] - 1);
+            torch::Tensor widths = torch::empty(indexes.sizes()[0] - 1);
+            torch::Tensor heights = torch::empty(indexes.sizes()[0] - 1);
+            for (size_t i = 0; i < indexes.sizes()[0] - 1; ++i)
+            {
+                lefts[i] = std::max(dets[indexes[0]][0].item().toFloat(), dets[indexes[i + 1]][0].item().toFloat());
+                tops[i] = std::max(dets[indexes[0]][1].item().toFloat(), dets[indexes[i + 1]][1].item().toFloat());
+                rights[i] = std::min(dets[indexes[0]][2].item().toFloat(), dets[indexes[i + 1]][2].item().toFloat());
+                bottoms[i] = std::min(dets[indexes[0]][3].item().toFloat(), dets[indexes[i + 1]][3].item().toFloat());
+                widths[i] = std::max(float(0), rights[i].item().toFloat() - lefts[i].item().toFloat());
+                heights[i] = std::max(float(0), bottoms[i].item().toFloat() - tops[i].item().toFloat());
+            }
+            torch::Tensor overlaps = widths * heights;
+
+            // FIlter by IOUs
+            torch::Tensor ious = overlaps / (areas.select(0, indexes[0].item().toInt()) + torch::index_select(areas, 0, indexes.slice(0, 1, indexes.sizes()[0])) - overlaps);
+            indexes = torch::index_select(indexes, 0, torch::nonzero(ious <= iou_thresh).select(1, 0) + 1);
+        }
+        keep = keep.toType(torch::kInt64);
+        output.push_back(torch::index_select(dets, 0, keep.slice(0, 0, count)));
+    }
+    return output;
+}
+
+void YOLOv5Detector(const cv::Mat &image, std::vector<std::string> &classnames, std::vector<Object> &vObject)
+{
+    torch::jit::script::Module module = torch::jit::load("../config/yolov5s.torchscript.pt");
+
+    cv::Mat imageResized;
+    // Preparing input tensor
+    cv::resize(image, imageResized, cv::Size(640, 384));
+    cv::cvtColor(imageResized, imageResized, cv::COLOR_BGR2RGB);
+    torch::Tensor imgTensor = torch::from_blob(imageResized.data, {imageResized.rows, imageResized.cols, 3}, torch::kByte);
+    imgTensor = imgTensor.permute({2, 0, 1});
+    imgTensor = imgTensor.toType(torch::kFloat);
+    imgTensor = imgTensor.div(255);
+    imgTensor = imgTensor.unsqueeze(0);
+
+    // preds: [?, 15120, 9]
+    torch::Tensor preds = module.forward({imgTensor}).toTuple()->elements()[0].toTensor();
+    std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
+
+    cv::Mat showImage = image.clone();
+    if (dets.size() > 0)
+    {
+        // Visualize result
+        for (size_t i = 0; i < dets[0].sizes()[0]; ++i)
+        {
+            float left = dets[0][i][0].item().toFloat() * image.cols / 640.0;
+            float top = dets[0][i][1].item().toFloat() * image.rows / 384.0;
+            float right = dets[0][i][2].item().toFloat() * image.cols / 640.0;
+            float bottom = dets[0][i][3].item().toFloat() * image.rows / 384.0;
+            float score = dets[0][i][4].item().toFloat();
+            int classID = dets[0][i][5].item().toInt();
+
+            Object obj;
+            obj.id = classID;
+            obj.corner = cv::Point2i(floor(left) - 5, floor(top) - 5);
+            if (obj.corner.x <= 0) obj.corner.x = 1;
+            if (obj.corner.y <= 0) obj.corner.y = 1;
+            obj.w = ceil(right - left)+10;
+            obj.h = ceil(bottom - top)+10;
+            if (obj.corner.x + obj.w >= image.cols) obj.w = image.cols - obj.corner.x -1;
+            if (obj.corner.y + obj.h >= image.rows) obj.h = image.rows - obj.corner.y -1;
+            obj.score = score;
+            vObject.emplace_back(obj);
+
+            cv::rectangle(showImage, cv::Rect(left, top, (right - left), (bottom - top)), cv::Scalar(0, 255, 0), 2);
+
+            cv::putText(showImage,
+                        classnames[classID] + ": " + cv::format("%.2f", score),
+                        cv::Point(left, top),
+                        cv::FONT_HERSHEY_SIMPLEX, (right - left) / 200, cv::Scalar(0, 255, 0), 2);
+        }
+    }else{
+        cout << "[WARRNING] NO OBJECT CAN BE DETECTED! " << endl;
+        return;
+    }
+    cv::imshow("", showImage);
+    // waitKey(0);
+}
+
+void PreProcessingOnLine(const cv::Mat &imgRGB, cv::Mat &objectRGB)
+{
+    std::vector<std::string> classnames;
+    std::ifstream f("../config/coco.names");
+    std::string name = "";
+    while (std::getline(f, name))
+        classnames.push_back(name);
+
+    vector<Object> vObject;
+    YOLOv5Detector(imgRGB, classnames, vObject);
+    if (vObject.size() == 0) return;
+    Object obj = vObject[0];
+
+    cv::Mat rgbROI = imgRGB(cv::Rect(obj.corner.x, obj.corner.y, obj.w, obj.h));
+    // 彩色图像采用双边滤波去噪
+    bilateralFilter(rgbROI, objectRGB, 15, 20, 50);
+    // objectRGB = rgbROI.clone();
+}
+
+void PreProcessingOffLine(const cv::Mat &imgRGB, const std::string &strPath, cv::Mat &objectRGB)
+{
+    vector<Object> vObject;
+    LoadObjectFile(strPath, vObject);
+    if (vObject.size() == 0) return;
+    Object obj = vObject[0];
+    obj.print();
+
+    cv::Mat rgbROI = imgRGB(cv::Rect(obj.corner.x, obj.corner.y, obj.w, obj.h));
+    // 彩色图像采用双边滤波去噪
+    bilateralFilter(rgbROI, objectRGB, 15, 20, 50);
+    objectRGB = rgbROI.clone();
 }
