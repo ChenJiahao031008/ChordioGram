@@ -3,7 +3,7 @@
 ### 一、项目介绍
 
 本项目是对边缘特征描述符：弦直方图 相关论文的**非官方**复现。
-此外对部分内容做了一些改进，使其能够适用于物体SLAM上。
+此外对部分内容做了一些改进，并加入了YOLOv5-LibTorch版本实时检测物体，使其能够在未来应用于物体SLAM上。
 
 相关论文包括：
 
@@ -13,14 +13,28 @@
 
 ### 二、使用及测试
 
+**配置说明**：
+
+由于涉及到深度学习，这块比较麻烦一点。我的配置如下：
+
++ RTX 3060 Laptop显卡 Driver 470.42.01
++ CUDA 11.1（显卡太新以至于11以下的不兼容）
++ cudnn 8.1.0.77
++ OpenCV 3.4.4 （无cuda版本，因为不支持cuda11）
++ LIbTorch： libtorch-cxx11-abi-shared-with-deps-1.9.0+cu111 
+
+运行前修改`CMakeLists.txt`文件中libtorch库的位置（第13行）
+
+**编译运行测试**
+
 ```bash
 mkdir build && cd build
 cmake ..
 make
-../bin/main ../data/1.jpg ../data/2.jpg ../data/1.txt ../data/2.txt
-../bin/main ../data/3.jpg ../data/4.jpg ../data/3.txt ../data/4.txt
-../bin/main ../data/4.jpg ../data/5.jpg ../data/4.txt ../data/5.txt
-../bin/main ../data/10.png ../data/11.png ../data/10.txt ../data/11.txt
-../bin/main ../data/11.png ../data/12.png ../data/11.txt ../data/12.txt
+../bin/main ../data/01.jpg ../data/02.jpg
+../bin/main ../data/04.jpg ../data/07.jpg  
 ```
 
+### 三、参考
+
+YOLOv5的libtorch版本参考仓库：https://github.com/Nebula4869/YOLOv5-LibTorch
